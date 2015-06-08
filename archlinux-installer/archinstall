@@ -1,11 +1,23 @@
 #!/bin/bash
 
 #
-# Arch Linux installer
-#
-# Author: Patryk Jaworski <regalis@regalis.com>
-# License: GNU/GPLv3
-#
+# Arch GNU/Linux installer
+# 
+# Copyright (C) Patryk Jaworski <regalis@regalis.com.pl>
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# 
 
 #
 # Core::globals
@@ -145,7 +157,7 @@ run_hooks() {
 #
 
 add_packages() {
-	PACKAGES="$PACKAGES $1"
+	PACKAGES="$PACKAGES $@"
 }
 
 set_install_hook() {
@@ -171,6 +183,34 @@ do_mount() {
 	local TYPE=$3
 	shift 3
 	mount -t ${TYPE} ${DEVICE} ${DIR} $@ && MOUNTPOINTS=("${DIR}" "${MOUNTPOINTS[@]}")
+}
+
+
+#
+# Core::pacman
+#
+
+# $1..n packages
+install_packages() {
+	pacman -r ${TARGET} --noconfirm --quiet --noprogressbar --needed -Sy $@
+}
+
+# $1..n packages
+remove_packages() {
+	pacman -r ${TARGET} --noconfirm --quiet --noprogressbar -R $@
+}
+
+
+#
+# Core::chroot
+#
+
+# $1 - program
+# $2..n program args
+#
+chroot_exec() {
+	info "[chroot] Executing command: " $@
+	chroot ${TARGET} $@
 }
 
 #
@@ -214,7 +254,7 @@ hook_pacman_install() {
 	info "preparing target directory"
 	mkdir -p $TARGET/var/lib/pacman > /dev/null 2>&1 || err "Unable to create directory in ${TARGET}"
 	info "installing packages"
-	pacman -r ${TARGET} --noconfirm --quiet --noprogressbar --needed -Sy ${PACKAGES}
+	install_packages ${PACKAGES}
 	if [[ $? -eq 0 ]]; then
 		info "all packages installed"
 	else
@@ -232,7 +272,8 @@ hook_prepare_chroot_postinstall() {
 	do_mount /dev "${TARGET}/dev" devtmpfs -o bind &&
 	do_mount proc "${TARGET}/proc" proc -o nosuid,nodev,noexec &&
 	do_mount sys "${TARGET}/sys" sysfs -o nosuid,nodev,noexec &&
-	do_mount devpts "${TARGET}/dev/pts" devpts
+	do_mount devpts "${TARGET}/dev/pts" devpts &&
+	do_mount /etc/resolv.conf "${TARGET}/etc/resolv.conf" resolv -o bind
 }
 
 hook_build_mkcinitcpio_postinstall() {
@@ -302,10 +343,10 @@ main() {
 	fi;
 
 	info "Configuration:"
-	info "    Hooks:         : ${HOOKS}"
+	info "    Hooks          : ${HOOKS}"
 	info "    Directory      : ${TARGET}"
 	info "    Architecture   : ${ARCHITECTURE}"
-	info "    Packages:      : ${PACKAGES}"
+	info "    Packages       : ${PACKAGES}"
 
 	ask "Continue?" || { warn "Aborting..."; exit 1; }
 	
@@ -313,6 +354,5 @@ main() {
 	run_hooks "postinstall"
 	echo;
 }
-
-type ARCHLINUX_INSTALLER_INCLUDE > /dev/null 2>&1 || main $@
+[[ $0 != ${BASH_SOURCE} ]] || main $@
 # vim: ft=sh :

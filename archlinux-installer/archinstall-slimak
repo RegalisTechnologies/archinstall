@@ -1,0 +1,53 @@
+#/bin/bash
+
+#
+# Arch GNU/Linux installer
+# Slimak wrapper
+# 
+# Copyright (C) Patryk Jaworski <regalis@regalis.com.pl>
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# 
+
+. ./archinstall
+
+hook_slimak_initram_preinstall() {
+	add_packages wget pv fakeroot git findutils sudo mkinitcpio-nfs-utils
+}
+
+hook_slimak_initram_postinstall() {
+	info "Creating build user"
+	chroot_exec useradd -m build
+	cat <<EOF > ${TARGET}/home/build/build.sh
+#/bin/bash
+cd ~
+wget "https://raw.githubusercontent.com/Regalis/mkinitramfs-squashfs/develop/dist/archlinux/PKGBUILD"
+makepkg -f
+find -name *.pkg.tar.xz -execdir mv '{}' mkinitcpio-squashfs \;
+EOF
+	info "Building mkinitcpio-squashfs package"
+	chroot_exec sudo -u build -- bash /home/build/build.sh
+	info "Installing package mkinitcpio-squashfs-git"
+	pacman -r ${TARGET} -U ${TARGET}/home/build/mkinitcpio-squashfs --noconfirm --noprogressbar ||
+		err "Unable to install package"
+	info "Cleaning build environment"
+	chroot_exec userdel -r build
+
+}
+
+SCHEME_slimak="${SCHEME_base/prepare_chroot/prepare_chroot slimak_initram}"
+
+main $@
+
+# vim: ft=sh :
