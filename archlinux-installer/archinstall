@@ -272,7 +272,7 @@ hook_prepare_chroot_postinstall() {
 	do_mount /dev "${TARGET}/dev" devtmpfs -o bind &&
 	do_mount proc "${TARGET}/proc" proc -o nosuid,nodev,noexec &&
 	do_mount sys "${TARGET}/sys" sysfs -o nosuid,nodev,noexec &&
-	do_mount devpts "${TARGET}/dev/pts" devpts &&
+	do_mount devpts "${TARGET}/dev/pts" devpts -o gid=5,mode=620  &&
 	do_mount /etc/resolv.conf "${TARGET}/etc/resolv.conf" resolv -o bind
 }
 

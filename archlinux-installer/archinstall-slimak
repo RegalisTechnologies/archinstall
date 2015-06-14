@@ -22,6 +22,8 @@
 
 . ./archinstall
 
+SLIMAK_INITRAM_MODULES="forcedeth"
+
 hook_slimak_initram_preinstall() {
 	add_packages wget pv fakeroot git findutils sudo mkinitcpio-nfs-utils
 }
@@ -43,6 +45,15 @@ EOF
 		err "Unable to install package"
 	info "Cleaning build environment"
 	chroot_exec userdel -r build
+
+# TODO: learn sed
+# TODO: fix sed rubbish
+
+	grep -e "^MODULES=\".*${SLIMAK_INITRAM_MODULES}.*\"" ${TARGET}/etc/mkinitcpio.conf ||
+		{ info "Adding additional modules to mkinitcpio.conf"; sed -i.bak -r -e "s/^MODULES=\"(.*)\"/MODULES=\"\1 ${SLIMAK_INITRAM_MODULES}\"/" ${TARGET}/etc/mkinitcpio.conf; }
+	
+	grep -e '^HOOKS=".*net squashfs.*"' ${TARGET}/etc/mkinitcpio.conf ||
+		{ info "Adding net, squashfs hooks to mkinitcpio.conf"; sed -i.bak -r -e 's/^(HOOKS=")(.*)filesystems(.*)"/\1\2net squashfs filesystems\3"/' -e 's/^(HOOKS=")(.*) fsck(.*)"/\1\2\3"/' ${TARGET}/etc/mkinitcpio.conf; }
 
 }
 
