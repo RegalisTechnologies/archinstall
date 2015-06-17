@@ -276,8 +276,73 @@ hook_prepare_chroot_postinstall() {
 	do_mount /etc/resolv.conf "${TARGET}/etc/resolv.conf" resolv -o bind
 }
 
+hook_prepare_chroot_cleanup_postinstall() {
+	umount ${MOUNTPOINTS[@]} && info "chroot cleanup: OK"
+}
+
 hook_build_mkcinitcpio_postinstall() {
 	chroot "${TARGET}" mkinitcpio -p linux
+}
+
+#
+# Diskless environment
+#
+
+DISKLESS_INITRAM_MODULES="forcedeth e1000"
+
+hook_diskless_preinstall() {
+	add_packages wget pv fakeroot git findutils sudo mkinitcpio-nfs-utils
+}
+
+#
+# Diskless postinstall hook
+# * download and build mkinitramfs-squashfs package source from Github.com/Regalis
+# * install mkinitramfs-squashfs package
+# * prepare mkinitcpio.conf:
+#   * add initram modules (see DISKLESS_INITRAM_MODULES variable)
+#   * add squashfs and net hooks
+#   * remove fsck hook
+# 
+hook_diskless_postinstall() {
+	info "Creating build user"
+	chroot_exec useradd -m build
+	cat <<EOF > ${TARGET}/home/build/build.sh
+#/bin/bash
+cd ~
+wget "https://raw.githubusercontent.com/Regalis/mkinitramfs-squashfs/develop/dist/archlinux/PKGBUILD"
+makepkg -f
+find -name *.pkg.tar.xz -execdir mv '{}' mkinitcpio-squashfs \;
+EOF
+	info "Building mkinitcpio-squashfs package"
+	chroot_exec sudo -u build -- bash /home/build/build.sh
+	info "Installing package mkinitcpio-squashfs-git"
+	pacman -r ${TARGET} -U ${TARGET}/home/build/mkinitcpio-squashfs --noconfirm --noprogressbar ||
+		err "Unable to install package"
+	info "Cleaning build environment"
+	chroot_exec userdel -r build
+
+# TODO: learn sed
+# TODO: fix sed rubbish
+
+	grep -e "^MODULES=\".*${DISKLESS_INITRAM_MODULES}.*\"" ${TARGET}/etc/mkinitcpio.conf ||
+		{ info "Adding additional modules to mkinitcpio.conf"; sed -i.bak -r -e "s/^MODULES=\"(.*)\"/MODULES=\"\1 ${DISKLESS_INITRAM_MODULES}\"/" ${TARGET}/etc/mkinitcpio.conf; }
+	
+	grep -e '^HOOKS=".*net squashfs.*"' ${TARGET}/etc/mkinitcpio.conf ||
+		{ info "Adding net, squashfs hooks to mkinitcpio.conf"; sed -i.bak -r -e 's/^(HOOKS=")(.*)filesystems(.*)"/\1\2net squashfs filesystems\3"/' -e 's/^(HOOKS=")(.*) fsck(.*)"/\1\2\3"/' ${TARGET}/etc/mkinitcpio.conf; }
+
+}
+
+#
+# Schemes helpers
+#
+
+REGISTERED_SCHEMES=();
+
+# $1..$n schemes
+register_scheme() {
+	for X in $@; do
+		REGISTERED_SCHEMES=("${X}" "${REGISTERED_SCHEMES[@]}");
+	done
 }
 
 #
@@ -285,9 +350,28 @@ hook_build_mkcinitcpio_postinstall() {
 #
 
 SCHEME_base="detect_architecture base pacman prepare_chroot build_mkcinitcpio"
+SCHEME_diskless="${SCHEME_base/prepare_chroot/prepare_chroot diskless}"
 
-main() {
-	while getopts "t:a:s:" opt; do
+register_scheme base diskless
+
+usage() {
+	echo "Usage: $0 -t TARGET_DIRECTORY [-a ARCHITECTURE] -s HOOKS_SCHEME"
+	echo "Options: "
+	echo "   -t     target directory"
+	echo "   -a     architecture"
+	echo "   -s     hooks scheme"
+	echo "Available schemes:"
+	for S in ${REGISTERED_SCHEMES[@]}; do
+		echo " ├─ $S"
+		[[ ${REGISTERED_SCHEMES[${#REGISTERED_SCHEMES[@]} - 1]} = $S ]] && echo -n " └─" || echo -n " ├─";
+		SCHEME_HOOKS=$(echo SCHEME_${S})
+		SCHEME_HOOKS=$(echo ${!SCHEME_HOOKS})
+		echo "── $SCHEME_HOOKS"
+	done
+}
+
+parse_options() {
+	while getopts "t:a:s:h" opt; do
 		case $opt in
 			"t")
 				TARGET=$OPTARG
@@ -298,6 +382,10 @@ main() {
 			"s")
 				HOOKS=$(echo SCHEME_${OPTARG})
 				HOOKS=${!HOOKS}
+			;;
+			"h")
+				usage
+				exit 0
 			;;
 			":")
 				err "Option -$OPTARG requires an argument..."
@@ -310,20 +398,30 @@ main() {
 		esac;
 	done;
 
-	# Validating options
+}
+
+validate_options() {
 	if [[ -z "$TARGET" ]]; then
 		err "You must specity target directory..."
+		usage
 		exit 1
 	else
 		if [[ ! -w "$TARGET" ]]; then
 			err "Something is wrong with target directory..."
+		usage
 			exit 1
 		fi;
 	fi;
 	if [[ -z "$HOOKS" ]]; then
 		err "No hooks specified..."
+		usage
 		exit 3
 	fi;
+}
+
+main() {
+	parse_options $@
+	validate_options
 
 	run_hooks "preinstall"
 
