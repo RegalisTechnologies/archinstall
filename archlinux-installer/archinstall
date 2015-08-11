@@ -232,7 +232,7 @@ hook_detect_architecture_preinstall() {
 
 hook_base_preinstall() {
 	info "adding base packages"
-	add_packages "base base-devel grub-bios vim openssh net-tools tree";
+	add_packages "base vim net-tools";
 }
 
 hook_gnome_preinstall() {
@@ -290,20 +290,17 @@ hook_build_mkcinitcpio_postinstall() {
 
 DISKLESS_INITRAM_MODULES="forcedeth e1000"
 
-hook_diskless_preinstall() {
-	add_packages wget pv fakeroot git findutils sudo mkinitcpio-nfs-utils
+hook_mkinitcpio_squashfs_preinstall() {
+	add_packages binutils make wget pv fakeroot git findutils sudo mkinitcpio-nfs-utils
 }
 
-#
-# Diskless postinstall hook
+# mkinitcpio-squashfs hook
+# 
 # * download and build mkinitramfs-squashfs package source from Github.com/Regalis
 # * install mkinitramfs-squashfs package
-# * prepare mkinitcpio.conf:
-#   * add initram modules (see DISKLESS_INITRAM_MODULES variable)
-#   * add squashfs and net hooks
-#   * remove fsck hook
 # 
-hook_diskless_postinstall() {
+hook_mkinitcpio_squashfs_postinstall() {
+	pacman -r ${TARGET} -Qq mkinitcpio-squashfs-git > /dev/null 2>&1 || { 
 	info "Creating build user"
 	chroot_exec useradd -m build
 	cat <<EOF > ${TARGET}/home/build/build.sh
@@ -320,16 +317,51 @@ EOF
 		err "Unable to install package"
 	info "Cleaning build environment"
 	chroot_exec userdel -r build
+	}
+}
 
+#
+# Diskless postinstall hook
+# * prepare mkinitcpio.conf:
+#   * add initram modules (see DISKLESS_INITRAM_MODULES variable)
+#   * add squashfs and net hooks
+#   * remove fsck hook
+# 
+hook_diskless_postinstall() {
 # TODO: learn sed
 # TODO: fix sed rubbish
 
 	grep -e "^MODULES=\".*${DISKLESS_INITRAM_MODULES}.*\"" ${TARGET}/etc/mkinitcpio.conf ||
 		{ info "Adding additional modules to mkinitcpio.conf"; sed -i.bak -r -e "s/^MODULES=\"(.*)\"/MODULES=\"\1 ${DISKLESS_INITRAM_MODULES}\"/" ${TARGET}/etc/mkinitcpio.conf; }
 	
-	grep -e '^HOOKS=".*net squashfs.*"' ${TARGET}/etc/mkinitcpio.conf ||
-		{ info "Adding net, squashfs hooks to mkinitcpio.conf"; sed -i.bak -r -e 's/^(HOOKS=")(.*)filesystems(.*)"/\1\2net squashfs filesystems\3"/' -e 's/^(HOOKS=")(.*) fsck(.*)"/\1\2\3"/' ${TARGET}/etc/mkinitcpio.conf; }
+	grep -e '^HOOKS=".*net block squashfs.*"' ${TARGET}/etc/mkinitcpio.conf ||
+		{ info "Adding net, squashfs hooks to mkinitcpio.conf"; sed -i.bak -r -e 's/^(HOOKS=")(.*)filesystems(.*)"/\1\2net block squashfs filesystems\3"/' -e 's/^(HOOKS=")(.*) fsck(.*)"/\1\2\3"/' ${TARGET}/etc/mkinitcpio.conf; }
 
+}
+
+hook_mkinitcpio_disable_autodetect_postinstall() {
+	grep -e '^HOOKS=".*autodetect*"' ${TARGET}/etc/mkinitcpio.conf ||
+		{ info "Disabling autodetect in /etc/mkinitcpio.conf"; sed -i.bak -r -e 's/^(HOOKS=")(.*) autodetect(.*)"/\1\2\3"/' ${TARGET}/etc/mkinitcpio.conf; } 
+}
+
+hook_squashfs_postinstall() {
+	info "Creating exclude file..."
+	EF="$(mktemp)"
+
+	echo "./boot" > $EF
+	echo "./usr/share/gtk-doc" >> $EF
+	echo "./usr/share/man" >> $EF
+	echo "./usr/share/doc" >> $EF
+	echo "./lib/firmware" >> $EF
+	echo "./usr/include" >> $EF
+	echo "./var/lib/pacman" >> $EF
+	echo "./usr/lib/pacman" >> $EF
+	echo "./usr/include" >> $EF
+
+	info "Creating system image..."
+	( cd ${TARGET}; mksquashfs . /tmp/root.sfs -ef ${EF} )
+	info "System image ready..."
+	rm ${EF}
 }
 
 #
@@ -350,7 +382,7 @@ register_scheme() {
 #
 
 SCHEME_base="detect_architecture base pacman prepare_chroot build_mkcinitcpio"
-SCHEME_diskless="${SCHEME_base/prepare_chroot/prepare_chroot diskless}"
+SCHEME_diskless="${SCHEME_base/prepare_chroot/prepare_chroot diskless mkinitcpio_disable_autodetect}"
 
 register_scheme base diskless
 
@@ -397,7 +429,6 @@ parse_options() {
 			;;
 		esac;
 	done;
-
 }
 
 validate_options() {
@@ -452,5 +483,6 @@ main() {
 	run_hooks "postinstall"
 	echo;
 }
+
 [[ $0 != ${BASH_SOURCE} ]] || main $@
 # vim: ft=sh :
