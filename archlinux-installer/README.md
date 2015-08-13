@@ -32,11 +32,11 @@ hook_base_preinstall() {
 }
 ```
 
-Since we don not need to do enything else after the installation, we can ommit deifinition of `hook_base_posstinstall()`.
+Since we don not need to do anything else after the installation, we can omit definition of `hook_base_posstinstall()`.
 
 ## Schemes
 
-Scheme is a ordered list od hooks. It defines which hooks should be called. Example scheme:
+Scheme is an ordered list of hooks. It defines which hooks should be called. Example scheme:
 
 ```shell
 SCHEME_base="detect_architecture base pacman prepare_chroot build_mkcinitcpio"
@@ -44,7 +44,7 @@ SCHEME_base="detect_architecture base pacman prepare_chroot build_mkcinitcpio"
 
 ## Tuning
 
-You can easly integrate your own hooks into `archinstall` script. For example, if you want to package your system after successfull installation you can create hook named `package` and define it like this:
+You can easily integrate your own hooks into `archinstall` script. For example, if you want to package your system after successful installation you can create hook named `package` and define it like this:
 
 ```shell
 hook_package_postinstall() {
@@ -79,7 +79,7 @@ $ archinstall -t /tmp/arch -s base_package
 ### Special variables:
 
  * `TARGET` - target directory
- * `ARCHITECTURE` - new system arcitecture
+ * `ARCHITECTURE` - new system architecture
  * `HOOKS` - hooks scheduled for execution
  * `PACKAGES` - packages scheduled for for installation
  * `REGISTERED_SCHEMES` - list of all registered schemes
@@ -97,9 +97,9 @@ $ archinstall -t /tmp/arch -s base_package
 
 ## Tips and tricks
 
-You can easly integrate archinstall with your own scripts. For example, you can use the following solution to dynamically load hooks/schemes into your script.
+You can easily integrate archinstall with your own scripts. For example, you can use the following solution to dynamically load hooks/schemes into your script.
 
-Directory stryucture:
+Directory structure:
 
 	.
 	├── hooks.d/
