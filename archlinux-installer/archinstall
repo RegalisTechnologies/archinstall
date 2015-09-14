@@ -284,6 +284,20 @@ hook_build_mkcinitcpio_postinstall() {
 	chroot "${TARGET}" mkinitcpio -p linux
 }
 
+hook_create_build_user_postinstall() {
+	grep -q build ${TARGET}/etc/passwd || {
+		info "Creating build user"
+		chroot_exec useradd -m build
+	}
+}
+
+hook_delete_build_user_postinstall() {
+	grep -q build ${TARGET}/etc/passwd && {
+		info "Cleaning build environment"
+		chroot_exec userdel -r build
+	}
+}
+
 #
 # Diskless environment
 #
@@ -301,8 +315,6 @@ hook_mkinitcpio_squashfs_preinstall() {
 # 
 hook_mkinitcpio_squashfs_postinstall() {
 	pacman -r ${TARGET} -Qq mkinitcpio-squashfs-git > /dev/null 2>&1 || { 
-	info "Creating build user"
-	chroot_exec useradd -m build
 	cat <<EOF > ${TARGET}/home/build/build.sh
 #/bin/bash
 cd ~
@@ -315,8 +327,6 @@ EOF
 	info "Installing package mkinitcpio-squashfs-git"
 	pacman -r ${TARGET} -U ${TARGET}/home/build/mkinitcpio-squashfs --noconfirm --noprogressbar ||
 		err "Unable to install package"
-	info "Cleaning build environment"
-	chroot_exec userdel -r build
 	}
 }
 
