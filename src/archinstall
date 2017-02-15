@@ -24,9 +24,15 @@
 #
 
 TARGET="" # target directory
-ARCHITECTURE="" # new system architecture
+ARCHITECTURE="" # target architecture
 HOOKS="" # hooks list
 PACKAGES="" # target packages
+CONFIGURATION=()
+CONFIGURATION_INCLUDE_FILE=""
+declare -A CONFIGURATION_HOOKS
+ERRORS=0
+WARNINGS=0
+WERR=0 # Treat warnings as errors
 
 #
 # Core::decorations
@@ -49,10 +55,12 @@ info() {
 }
 
 warn() {
+	let WARNINGS++
 	echo "${CYLW}[W]${CSTD}${MSG_CONTEXT} $@"
 }
 
 err() {
+	let ERRORS++
 	echo "${CRED}[E]${CSTD}${MSG_CONTEXT} $@" 1>&2
 }
 
@@ -79,53 +87,114 @@ clear_context() {
 	MSG_CONTEXT=""
 }
 
-
 #
-# Utils::jobs
+# Utils::configuration
 #
 
-JOB_COMMENT="";
-JOB_STATUS="";
-JOBS=99;
-JOB=0;
+# Arguments:
+#  $1 - variable name (string)
+#  $2 - default value (string)
+#  $3 - description (string)
+#  $4 - required (optional, if set - variable is marked as required)
+config_add() {
+	info "Hook: ${HOOK}"
+	info "Registering request for new configuration variable: '$1'"
 
-new_job() {
-	[[ "$1" = "" ]] && $1 = 0;
-	JOBS=$1;
-	JOB=0;
+	CONFIGURATION=(${CONFIGURATION[@]} ${1})
+	CONFIGURATION_HOOKS[${HOOK}]="${CONFIGURATION_HOOKS[${HOOK}]} ${1}"
+	
+	if [[ -n "$2" ]]; then
+		export CONF_$1_DEFAULT="$2"
+	else
+		info "Variable '$1' has no default value..."
+	fi
+	if [[ -n "$3" ]]; then
+		export CONF_$1_DESCRIPTION="$3"
+	fi
+	if [[ -n "$4" ]]; then
+		export CONF_$1_REQUIRED=1
+	fi
 }
 
-job_done() {
-	echo -ne "\r\033[K${CGRN}[I]${CSTD} $JOB_COMMENT - $JOB_STATUS" && echo;
-	[[ ! $JOBS -eq 0 ]] && let JOB++;
+# Arguments
+# $1 - set defaults (if set, empty variables will be filled with defualt value)
+config_dump() {
+	echo -e "#!/bin/bash\n"
+	for HOOK_NAME in "${!CONFIGURATION_HOOKS[@]}"; do
+		for VAR_NAME in ${CONFIGURATION_HOOKS[${HOOK_NAME}]}; do
+			VAR_DSC="CONF_${VAR_NAME}_DESCRIPTION"
+			VAR_DEF="CONF_${VAR_NAME}_DEFAULT"
+
+			echo "# Requested by hook \"${HOOK_NAME}\""
+			if [[ -v "${VAR_DEF}" ]]; then
+				echo "# Default value: \"${!VAR_DEF}\""
+			fi
+
+			if [[ -v "${VAR_DSC}" ]]; then
+				echo "#"
+				echo "${!VAR_DSC}" | fold -s | awk '{ print "# " $0 }'	
+				echo -e "#"
+			fi
+			
+			if [[ -n "${1}" ]]; then
+				echo "${VAR_NAME}=\"${!VAR_DEF}\""
+			else
+				echo "${VAR_NAME}=\"\""
+			fi
+			echo
+		done
+	done
 }
 
-job_fail() {
-	echo -ne "\r\033[K${CRED}[I]${CSTD} $JOB_COMMENT (${CRED}${1}${CSTD})" && echo;
-	[[ ! $JOBS -eq 0 ]] && let JOB++;
+config_check() {
+	ERRORS=0
+	for HOOK_NAME in "${!CONFIGURATION_HOOKS[@]}"; do
+		for VAR_NAME in ${CONFIGURATION_HOOKS[${HOOK_NAME}]}; do
+			VAR_DEF="CONF_${VAR_NAME}_DEFAULT"
+			VAR_REQ="CONF_${VAR_NAME}_REQUIRED"
+
+			if test -z "${!VAR_NAME}" -a -n "${!VAR_DEF}"; then
+				info "Undefined variable \"${VAR_NAME}\" which is required by hook ${HOOK_NAME}"
+				info "Using default value = " "${!VAR_DEF}"
+				export ${VAR_NAME}=${!VAR_DEF}
+			fi
+
+			if test -z "${!VAR_NAME}" -a -v "${VAR_REQ}"; then
+				err "Undefined variable \"${VAR_NAME}\" which is required by hook ${HOOK_NAME}"
+			fi
+
+		done
+	done
+	if [[ ! ${ERRORS} -eq 0 ]]; then
+		err "Configuration stage error. Exiting..."
+		exit 10
+	fi
 }
 
-job_print() {
-	JOB_COMMENT=$1
-	JOB_STATUS="";
-	echo -ne "\r\033[K[I] $1";
-	[[ ! $JOBS -eq 0 ]] && echo -n "[$JOB/$JOBS]"
-	sleep 0.2s;
-	[[ ! $JOBS -eq 0 && $JOB -eq $JOBS ]] && echo;
-}
+config_include() {
+	if [[ ! -f "${CONFIGURATION_INCLUDE_FILE}" ]]; then
+		err "Unable to find configuration file ${CONFIGURATION_INCLUDE_FILE}"
+		exit 2
+	fi
+	
+	info "Loading configuration file ${CONFIGURATION_INCLUDE_FILE}"
 
-job_status() {
-	JOB_STATUS=$1
-	echo -ne "\r\033[K[I] $JOB_COMMENT - $1";
-	sleep 0.2s;
+	source "${CONFIGURATION_INCLUDE_FILE}"
+
+	if [[ ! $? -eq 0 ]]; then
+		err "Configuration file contain errors..."
+		exit 2
+	fi
 }
 
 #
 # Utils::hooks
 #
 
+# $1 - stage (preinstall/postinstall etc.)
 run_hooks() {
-	new_job 0
+	ERRORS=0
+	WARNINGS=0
 	if [[ $1 != "install" ]]; then
 		for HOOK in $HOOKS; do
 			NAME=$(echo hook_${HOOK}_$1)
@@ -150,6 +219,20 @@ run_hooks() {
 		fi
 			
 	fi;
+
+	if [[ ${ERRORS} -gt 0 ]]; then
+		info "Errors in stage $1"
+		info "Exiting installation due to previous error messages: ${ERRORS}"
+		exit 10
+	fi
+
+	if [[ ${WARNINGS} -gt 0 ]]; then
+		info "Warnings in stage $1"
+		if [[ "${WERR}" = "1" ]]; then
+			info "Exiting installation due to previous warning messages (-e): ${WARNINGS}"
+			exit 5
+		fi
+	fi
 }
 
 #
@@ -224,10 +307,11 @@ chroot_exec() {
 # hook_NAME_desc - will be executed when help requested
 #
 
-hook_detect_architecture_preinstall() {
+hook_detect_architecture_configure() {
 	info "detecting architecture";
 	ARCHITECTURE=i686
 	grep '^flags.* lm ' /proc/cpuinfo > /dev/null 2>&1 && ARCHITECTURE=x86_64
+	info "architecture detected as ${ARCHITECTURE}"
 }
 
 hook_base_preinstall() {
@@ -245,14 +329,19 @@ hook_xfce_preinstall() {
 	add_packages "xfce4 xfce4-goodies evince"
 }
 
+hook_pacman_preconfigure() {
+	config_add ARCHITECTURE '' 'Packages architecture' required
+	config_add TARGET '' 'Target directory' required
+}
+
 hook_pacman_preinstall() {
+	info 'Creating required directories inside target directory...'
+	mkdir -p $TARGET/var/lib/pacman || err "Unable to create directory in ${TARGET}"
 	info "setting install hook"
 	set_install_hook pacman
 }
 
 hook_pacman_install() {
-	info "preparing target directory"
-	mkdir -p $TARGET/var/lib/pacman > /dev/null 2>&1 || err "Unable to create directory in ${TARGET}"
 	info "installing packages"
 	install_packages ${PACKAGES}
 	if [[ $? -eq 0 ]]; then
@@ -268,7 +357,7 @@ prepare_chroot_cleanup() {
 }
 
 hook_prepare_chroot_postinstall() {
-	trap "prepare_chroot_cleanup" EXIT
+	trap "prepare_chroot_cleanup" EXIT SIGINT SIGTERM
 	do_mount /dev "${TARGET}/dev" devtmpfs -o bind &&
 	do_mount proc "${TARGET}/proc" proc -o nosuid,nodev,noexec &&
 	do_mount sys "${TARGET}/sys" sysfs -o nosuid,nodev,noexec &&
@@ -284,25 +373,9 @@ hook_build_mkcinitcpio_postinstall() {
 	chroot "${TARGET}" mkinitcpio -p linux
 }
 
-hook_create_build_user_postinstall() {
-	grep -q build ${TARGET}/etc/passwd || {
-		info "Creating build user"
-		chroot_exec useradd -m build
-	}
-}
-
-hook_delete_build_user_postinstall() {
-	grep -q build ${TARGET}/etc/passwd && {
-		info "Cleaning build environment"
-		chroot_exec userdel -r build
-	}
-}
-
 #
 # Diskless environment
 #
-
-DISKLESS_INITRAM_MODULES="forcedeth e1000"
 
 hook_mkinitcpio_squashfs_preinstall() {
 	add_packages binutils make wget pv fakeroot git findutils sudo mkinitcpio-nfs-utils
@@ -330,6 +403,11 @@ EOF
 	}
 }
 
+hook_diskless_preconfigure() {
+	config_add 'DISKLESS_INITRAM_MODULES' 'forcedeth e1000' \
+		"Kernel modules included in initial RAM disk" required
+}
+
 #
 # Diskless postinstall hook
 # * prepare mkinitcpio.conf:
@@ -354,7 +432,23 @@ hook_mkinitcpio_disable_autodetect_postinstall() {
 		{ info "Disabling autodetect in /etc/mkinitcpio.conf"; sed -i.bak -r -e 's/^(HOOKS=")(.*) autodetect(.*)"/\1\2\3"/' ${TARGET}/etc/mkinitcpio.conf; } 
 }
 
+hook_squashfs_preconfigure() {
+	config_add 'SQUASHFS_FILE_PATH' '/tmp/root.sfs' \
+		"Save Squashfs archive in this location (absolute path)" required
+}
+
 hook_squashfs_postinstall() {
+	SQUASHFS_DIR=`dirname ${SQUASHFS_FILE_PATH}`
+
+	if [[ ! -d "${SQUASHFS_DIR}" ]]; then
+		info "Creating directory for squashfs image..."
+		mkdir -p ${SQUASHFS_DIR}
+		if [[ ! $? -eq 0 ]]; then
+			err "Unable to create output direcotry..."
+			return 1
+		fi
+	fi
+
 	info "Creating exclude file..."
 	EF="$(mktemp)"
 
@@ -369,7 +463,7 @@ hook_squashfs_postinstall() {
 	echo "./usr/include" >> $EF
 
 	info "Creating system image..."
-	( cd ${TARGET}; mksquashfs . /tmp/root.sfs -ef ${EF} )
+	( cd ${TARGET}; mksquashfs . ${SQUASHFS_FILE_PATH} -ef ${EF} )
 	info "System image ready..."
 	rm ${EF}
 }
@@ -397,37 +491,53 @@ SCHEME_diskless="${SCHEME_base/prepare_chroot/prepare_chroot diskless mkinitcpio
 register_scheme base diskless
 
 usage() {
-	echo "Usage: $0 -t TARGET_DIRECTORY [-a ARCHITECTURE] -s HOOKS_SCHEME"
+	echo "Usage: $0 [-t TARGET_DIRECTORY] [-a ARCHITECTURE] -s HOOKS_SCHEME"
 	echo "Options: "
-	echo "   -t     target directory"
-	echo "   -a     architecture"
-	echo "   -s     hooks scheme"
+	echo "   -a ARCH      architecture"
+	echo "   -d FILE      dump configuration file and exit"
+	echo "   -e           treat all warnings as errors"
+	echo "   -h           display help"
+	echo "   -i FILE      include configuration file"
+	echo "   -s SCHEME    hooks scheme"
+	echo "   -t DIR       target directory"
 	echo "Available schemes:"
 	for S in ${REGISTERED_SCHEMES[@]}; do
-		echo " ├─ $S"
-		[[ ${REGISTERED_SCHEMES[${#REGISTERED_SCHEMES[@]} - 1]} = $S ]] && echo -n " └─" || echo -n " ├─";
+		echo " -> $S"
 		SCHEME_HOOKS=$(echo SCHEME_${S})
 		SCHEME_HOOKS=$(echo ${!SCHEME_HOOKS})
-		echo "── $SCHEME_HOOKS"
+		for HOOK_NAME in $SCHEME_HOOKS; do
+			echo "    * $HOOK_NAME"
+		done
 	done
 }
 
 parse_options() {
-	while getopts "t:a:s:h" opt; do
+	while getopts "a:d:ehi:s:t:" opt; do
 		case $opt in
-			"t")
-				TARGET=$OPTARG
-			;;
 			"a")
 				ARCHITECTURE=$OPTARG
+			;;
+			"d")
+				CONFIGURATION_DUMP=$OPTARG
+				info "Program will run in \"configuration dump\" mode..."
+			;;
+			"e")
+				info "Treating warnings as errors"
+				WERR=1
+			;;
+			"h")
+				usage
+				exit 0
+			;;
+			"i")
+				CONFIGURATION_INCLUDE_FILE=$OPTARG
 			;;
 			"s")
 				HOOKS=$(echo SCHEME_${OPTARG})
 				HOOKS=${!HOOKS}
 			;;
-			"h")
-				usage
-				exit 0
+			"t")
+				TARGET=$OPTARG
 			;;
 			":")
 				err "Option -$OPTARG requires an argument..."
@@ -441,40 +551,32 @@ parse_options() {
 	done;
 }
 
-validate_options() {
-	if [[ -z "$TARGET" ]]; then
-		err "You must specity target directory..."
-		usage
-		exit 1
-	else
-		if [[ ! -w "$TARGET" ]]; then
-			err "Something is wrong with target directory..."
-		usage
-			exit 1
-		fi;
-	fi;
-	if [[ -z "$HOOKS" ]]; then
-		err "No hooks specified..."
-		usage
-		exit 3
-	fi;
-}
-
 main() {
 	parse_options $@
-	validate_options
+
+	if [[ -z "${HOOKS}" ]]; then
+		err "Hooks not set, did you forget -s option?"
+		exit 1
+	fi
+
+	run_hooks "preconfigure"
+
+	if [[ -n "${CONFIGURATION_DUMP}" ]]; then
+		config_dump defaults > "${CONFIGURATION_DUMP}"
+		info "Configuration file dumped to ${CONFIGURATION_DUMP}"
+		exit 0
+	fi
+
+	if [[ -n "${CONFIGURATION_INCLUDE_FILE}" ]]; then
+		info "Including configuration"
+		config_include
+	fi
+
+	run_hooks "configure"
+
+	config_check
 
 	run_hooks "preinstall"
-
-	if [[ -z "$ARCHITECTURE" ]] ; then
-		err "Target architecture not specified"
-		exit 2;
-	else
-		if [[ "$ARCHITECTURE" != "x86_64" && "$ARCHITECTURE" != "i686" ]]; then
-			err "Architecture must be one of x86_64, i368...";
-			exit 2;
-		fi;
-	fi;
 
 	if [[ -z "$INSTALL_HOOK" ]]; then
 		err "Install hook not specified. Exiting"
