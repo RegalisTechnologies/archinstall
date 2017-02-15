@@ -137,9 +137,9 @@ config_dump() {
 			fi
 			
 			if [[ -n "${1}" ]]; then
-				echo "${VAR_NAME}=\"${!VAR_DEF}\""
+				echo "${VAR_NAME}='${!VAR_DEF}'"
 			else
-				echo "${VAR_NAME}=\"\""
+				echo "${VAR_NAME}=''"
 			fi
 			echo
 		done
