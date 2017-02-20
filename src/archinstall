@@ -156,7 +156,7 @@ config_check() {
 			if test -z "${!VAR_NAME}" -a -n "${!VAR_DEF}"; then
 				info "Undefined variable \"${VAR_NAME}\" which is required by hook ${HOOK_NAME}"
 				info "Using default value = " "${!VAR_DEF}"
-				export ${VAR_NAME}=${!VAR_DEF}
+				export ${VAR_NAME}="${!VAR_DEF}"
 			fi
 
 			if test -z "${!VAR_NAME}" -a -v "${VAR_REQ}"; then
