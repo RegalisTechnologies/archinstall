@@ -260,14 +260,17 @@ MOUNTPOINTS=();
 # $4..n options passed directly to mount
 #
 do_mount() {
-	info "Trying to mount $3 on $2"
 	local DEVICE=$1
 	local DIR=$2
 	local TYPE=$3
 	shift 3
+    info "Trying to mount $TYPE ($DEVICE) on $DIR"
 	mount -t ${TYPE} ${DEVICE} ${DIR} $@ && MOUNTPOINTS=("${DIR}" "${MOUNTPOINTS[@]}")
+    if [[ ! $? -eq 0 ]]; then
+        err "Unable to mount $DEVICE";
+        return 1
+    fi
 }
-
 
 #
 # Core::pacman
@@ -301,6 +304,8 @@ chroot_exec() {
 #
 # Common hooks
 # 
+# hook_NAME_preconfigure - will be executed before "configure" hook
+# hook_NAME_configure - will be executed as a configure hook
 # hook_NAME_preinstall - will be executed before install hook
 # hook_NAME_install - will be execeted as a main install routine
 # hook_NAME_postinstall - will be executed after install hook
@@ -356,8 +361,10 @@ prepare_chroot_cleanup() {
 	umount ${MOUNTPOINTS[@]} && info "chroot cleanup: OK"
 }
 
-hook_prepare_chroot_postinstall() {
+hook_prepare_chroot_preinstall() {
 	trap "prepare_chroot_cleanup" EXIT SIGINT SIGTERM
+    mkdir ${TARGET}/{proc,sys,dev,dev/pts,etc}
+    touch ${TARGET}/etc/resolv.conf
 	do_mount /dev "${TARGET}/dev" devtmpfs -o bind &&
 	do_mount proc "${TARGET}/proc" proc -o nosuid,nodev,noexec &&
 	do_mount sys "${TARGET}/sys" sysfs -o nosuid,nodev,noexec &&
@@ -408,6 +415,10 @@ hook_diskless_preconfigure() {
 		"Kernel modules included in initial RAM disk" required
 }
 
+hook_diskless_preinstall() {
+    add_packages mkinitcpio-nfs-utils
+}
+
 #
 # Diskless postinstall hook
 # * prepare mkinitcpio.conf:
@@ -419,17 +430,17 @@ hook_diskless_postinstall() {
 # TODO: learn sed
 # TODO: fix sed rubbish
 
-	grep -e "^MODULES=\".*${DISKLESS_INITRAM_MODULES}.*\"" ${TARGET}/etc/mkinitcpio.conf ||
-		{ info "Adding additional modules to mkinitcpio.conf"; sed -i.bak -r -e "s/^MODULES=\"(.*)\"/MODULES=\"\1 ${DISKLESS_INITRAM_MODULES}\"/" ${TARGET}/etc/mkinitcpio.conf; }
+	grep -e "^MODULES=\(.*${DISKLESS_INITRAM_MODULES}.*\)" ${TARGET}/etc/mkinitcpio.conf ||
+		{ info "Adding additional modules to mkinitcpio.conf"; sed -i.bak -r -e "s/^MODULES=\((.*)\)/MODULES=\(\1 ${DISKLESS_INITRAM_MODULES}\)/" ${TARGET}/etc/mkinitcpio.conf; }
 	
-	grep -e '^HOOKS=".*net block squashfs.*"' ${TARGET}/etc/mkinitcpio.conf ||
-		{ info "Adding net, squashfs hooks to mkinitcpio.conf"; sed -i.bak -r -e 's/^(HOOKS=")(.*)filesystems(.*)"/\1\2net block squashfs filesystems\3"/' -e 's/^(HOOKS=")(.*) fsck(.*)"/\1\2\3"/' ${TARGET}/etc/mkinitcpio.conf; }
+	grep -e '^HOOKS=(.*net block squashfs.*)' ${TARGET}/etc/mkinitcpio.conf ||
+        { info "Adding net, squashfs hooks to mkinitcpio.conf"; sed -i.bak -r -e 's/^(HOOKS=\()(.*)block(.*)\)/\1\2net block squashfs\3\)/' -e 's/^(HOOKS=\()(.*) fsck(.*)\)/\1\2\3\)/' ${TARGET}/etc/mkinitcpio.conf; }
 
 }
 
 hook_mkinitcpio_disable_autodetect_postinstall() {
-	grep -e '^HOOKS=".*autodetect*"' ${TARGET}/etc/mkinitcpio.conf ||
-		{ info "Disabling autodetect in /etc/mkinitcpio.conf"; sed -i.bak -r -e 's/^(HOOKS=")(.*) autodetect(.*)"/\1\2\3"/' ${TARGET}/etc/mkinitcpio.conf; } 
+	grep -e '^HOOKS=(.*autodetect*)' ${TARGET}/etc/mkinitcpio.conf ||
+        { info "Disabling autodetect in /etc/mkinitcpio.conf"; sed -i.bak -r -e 's/^(HOOKS=\()(.*) autodetect(.*)\)/\1\2\3\)/' ${TARGET}/etc/mkinitcpio.conf; } 
 }
 
 hook_squashfs_preconfigure() {
