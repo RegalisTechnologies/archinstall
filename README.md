@@ -129,7 +129,7 @@ done
 # Load and register schemes:
 for X in schemes.d/*; do 
 	[[ -f $X ]] && . $X
-	register_scheme $X
+	register_scheme `basename $X`
 done
 
 # Call original main routine and pass all arguments
